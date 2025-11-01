@@ -32,7 +32,8 @@ class AzureClientManager:
         """Initialize all Azure clients and OpenAI clients if configured."""
         logger.info("Initializing clients...")
         
-        if settings.USE_OPENAI_FALLBACK:
+        # Prefer explicit OpenAI fallback when configured via flag or API key.
+        if settings.USE_OPENAI_FALLBACK or bool(settings.OPENAI_API_KEY):
             # Initialize OpenAI clients
             self.openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
             # Some wrappers require a model id at construction time; pass the
@@ -51,7 +52,7 @@ class AzureClientManager:
             self._azure_architect_agent = AzureArchitectAgent(
                 agent_client=self.openai_responses_client  # Use responses client for vision capabilities
             )
-            logger.info("OpenAI clients initialized successfully")
+            logger.info("OpenAI clients initialized successfully (fallback)")
         else:
             # Initialize Azure credential
             self.credential = DefaultAzureCredential()
@@ -73,7 +74,7 @@ class AzureClientManager:
             self.agent_client = AzureAIAgentClient(
                 project_endpoint=settings.AZURE_AI_PROJECT_ENDPOINT,
                 model_deployment_name=settings.AZURE_AI_MODEL_DEPLOYMENT_NAME,
-                async_credential=self.credential
+                credential=self.credential
             )
             
             # Initialize Azure Architect Agent with Azure clients

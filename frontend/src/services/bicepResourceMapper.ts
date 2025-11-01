@@ -106,7 +106,7 @@ export const BICEP_RESOURCE_MAPPINGS: BicepResourceMapping[] = [
   {
     resourceType: 'Microsoft.Sql/servers',
     serviceName: 'SQL Server',
-    iconTitle: 'SQL Server',
+    iconTitle: 'SQL Database',
     category: 'databases',
     bicepProperties: {
       apiVersion: '2023-05-01-preview',
@@ -404,11 +404,35 @@ export const BICEP_RESOURCE_MAPPINGS: BicepResourceMapping[] = [
     }
   },
 
+  // Governance
+  {
+    resourceType: 'Microsoft.Resources/resourceGroups',
+    serviceName: 'Resource Group',
+    iconTitle: 'Resource Groups',
+    category: 'governance',
+    bicepProperties: {
+      apiVersion: '2021-04-01',
+      commonProperties: ['location', 'tags'],
+      requiredProperties: ['location'],
+    },
+  },
+  {
+    resourceType: 'Microsoft.Management/managementGroups',
+    serviceName: 'Management Group',
+    iconTitle: 'Management Groups',
+    category: 'governance',
+    bicepProperties: {
+      apiVersion: '2021-04-01',
+      commonProperties: ['displayName', 'details'],
+      requiredProperties: [],
+    },
+  },
+
   // Content Delivery
   {
     resourceType: 'Microsoft.Cdn/profiles',
-    serviceName: 'CDN Profile',
-    iconTitle: 'CDN profiles',
+    serviceName: 'Azure Front Door and CDN Profiles',
+    iconTitle: 'Azure Front Door And CDN Profiles',
     category: 'networking',
     bicepProperties: {
       apiVersion: '2023-05-01',

@@ -165,22 +165,6 @@ const DiagramCanvas = () => {
           },
         }}
       >
-        <defs>
-          <marker
-            id="arrow"
-            viewBox="0 0 20 20"
-            refX="10"
-            refY="10"
-            markerWidth="10"
-            markerHeight="10"
-            orient="auto"
-          >
-            <path
-              d="M 0 0 L 20 10 L 0 20 z"
-              fill="hsl(var(--primary))"
-            />
-          </marker>
-        </defs>
         <Background 
           variant={BackgroundVariant.Dots} 
           gap={20} 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -52,6 +52,7 @@ class ChatRequest(BaseModel):
     message: str
     conversation_history: List[ChatMessage] = []
     model: str = "gpt-4"
+    context: Dict[str, Any] | None = Field(default=None, description="Optional conversation summary payload")
 
 
 class ChatResponse(BaseModel):
@@ -77,9 +78,62 @@ async def chat_completion(request: ChatRequest) -> ChatResponse:
             # Add system message for Azure Architect context
             messages.append({
                 "role": "system",
-                "content": "You are an expert Azure Architect AI assistant. You help users design cloud architectures, generate Infrastructure as Code (Bicep/Terraform), analyze diagrams, and provide Azure best practices. Be helpful, accurate, and concise in your responses."
+                "content": """You are an expert Azure Architect AI assistant. You help users design cloud architectures, generate Infrastructure as Code (Bicep/Terraform), analyze diagrams, and provide Azure best practices.
+
+When designing Azure architectures, ALWAYS structure your response using proper Azure hierarchy:
+- Start with Management Groups (if enterprise-scale)
+- Then Subscriptions
+- Then Landing Zones (e.g., "Online Landing Zone", "Corp Landing Zone")
+- Then Virtual Networks and Subnets
+- Then specific Azure services within those networks
+
+IMPORTANT: When listing services, use this structured format to ensure proper visual nesting:
+
+**GROUPS:**
+- Management Groups: [Management Group name]
+  - Contains: [Subscription names]
+- Subscriptions: [Subscription name]
+  - Contains: [Landing Zone names or direct services]
+- Landing Zones: [Landing Zone name] (e.g., "Online Landing Zone", "Corp Landing Zone")
+  - Contains: [VNet names or services]
+- Virtual Networks: [VNet name]
+  - Contains: [Subnet names or services]
+- Subnets: [Subnet name]
+  - Contains: [Service names]
+
+**SERVICES:**
+List all Azure services with their full names (e.g., "Azure Application Gateway", "Azure Key Vault", "Azure SQL Database", "Azure Storage Account").
+
+**CONNECTIONS:**
+Describe connections between services (e.g., "App Gateway -> App Service", "App Service -> SQL Database").
+
+Be helpful, accurate, and concise in your responses."""
             })
             
+            # Inject high-level context summary if provided
+            supplemental_context: List[str] = []
+            if request.context:
+                summary = request.context.get("summary") if isinstance(request.context, dict) else None
+                recent = request.context.get("recent_messages") if isinstance(request.context, dict) else None
+                if isinstance(summary, str) and summary.strip():
+                    supplemental_context.append(f"Conversation summary:\n{summary.strip()}")
+                if isinstance(recent, list):
+                    formatted_recent = []
+                    for entry in recent[-8:]:
+                        if not isinstance(entry, dict):
+                            continue
+                        role = entry.get("role", "user")
+                        content = entry.get("content", "")
+                        if isinstance(content, str) and content.strip():
+                            formatted_recent.append(f"{role}: {content.strip()}")
+                    if formatted_recent:
+                        supplemental_context.append("Recent exchanges:\n" + "\n".join(formatted_recent))
+            if supplemental_context:
+                messages.append({
+                    "role": "system",
+                    "content": "\n\n".join(supplemental_context)
+                })
+
             # Add conversation history
             for msg in request.conversation_history:
                 messages.append({

@@ -1,0 +1,25 @@
+import { ParsedGroupType } from './types';
+
+export const GROUP_TITLE_KEYWORDS: Array<{ keyword: string; type: ParsedGroupType }> = [
+  { keyword: 'landing zone', type: 'landingZone' },
+  { keyword: 'landing-zone', type: 'landingZone' },
+  { keyword: 'region', type: 'region' },
+  { keyword: 'virtual network', type: 'virtualNetwork' },
+  { keyword: 'vnet', type: 'virtualNetwork' },
+  { keyword: 'subnet', type: 'subnet' },
+  { keyword: 'private subnet', type: 'subnet' },
+  { keyword: 'public subnet', type: 'subnet' },
+  { keyword: 'network security group', type: 'networkSecurityGroup' },
+  { keyword: 'nsg', type: 'networkSecurityGroup' },
+  { keyword: 'cluster', type: 'cluster' },
+  { keyword: 'aks cluster', type: 'cluster' },
+  { keyword: 'resource group', type: 'resourceGroup' },
+  { keyword: 'security boundary', type: 'securityBoundary' },
+  { keyword: 'management group', type: 'managementGroup' },
+  { keyword: 'tenant root', type: 'managementGroup' },
+  { keyword: 'subscription', type: 'subscription' },
+  { keyword: 'policy assignment', type: 'policyAssignment' },
+  { keyword: 'policy definition', type: 'policyAssignment' },
+  { keyword: 'role assignment', type: 'roleAssignment' },
+  { keyword: 'rbac role', type: 'roleAssignment' },
+];

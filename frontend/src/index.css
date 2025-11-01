@@ -130,6 +130,42 @@ html.white-blue {
     animation: dash 20s linear infinite;
   }
 
+  /* Ensure React Flow controls (zoom/pan buttons) are visible in both light and dark themes */
+  .react-flow__controls {
+    /* keep layout but ensure icons inherit foreground color */
+    color: hsl(var(--foreground));
+  }
+
+  .react-flow__controls button,
+  .react-flow__controls svg,
+  .react-flow__controls .react-flow__controls-button {
+    color: hsl(var(--foreground));
+    fill: currentColor; /* SVG paths should use currentColor */
+  }
+
+  /* Stronger overrides for React Flow control icons (covers fill/stroke/path elements) */
+  .react-flow__controls,
+  .react-flow__controls *,
+  .react-flow__controls svg,
+  .react-flow__controls svg path,
+  .react-flow__controls svg circle,
+  .react-flow__controls svg rect {
+    color: hsl(var(--foreground)) !important;
+    fill: hsl(var(--foreground)) !important;
+    stroke: hsl(var(--foreground)) !important;
+  }
+
+  /* Give control buttons a subtle background so icons contrast on any theme */
+  .react-flow__controls button {
+    background: color-mix(in srgb, hsl(var(--card)) 80%, transparent);
+    border: 1px solid hsl(var(--border) / 0.25);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+
+  .react-flow__controls button:hover {
+    background: color-mix(in srgb, hsl(var(--card)) 88%, transparent);
+  }
+
   .animate-spin-slow {
     animation: spin 8s linear infinite;
   }

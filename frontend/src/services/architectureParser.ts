@@ -1,10 +1,14 @@
-/**
+﻿/**
  * Service to parse AI chat responses and extract Azure architecture components
  */
 
 import { Node } from '@xyflow/react';
 import { AzureService, azureServices } from '@/data/azureServices';
 import iconIndex from '@/data/azureIconIndex.json';
+import { ParsedGroupType } from './types';
+import {GROUP_TITLE_KEYWORDS} from './groupTitleKeywords';
+import {SERVICE_TO_ICON_MAPPINGS} from './serviceToIconMapper';
+import { patterns, connectionPatterns, bicepResourcePatterns, serviceNamePatterns } from './patterns';
 
 type IconEntry = { title?: string; file?: string; id?: string };
 type IconCategory = { icons?: IconEntry[] };
@@ -19,20 +23,6 @@ export interface ParsedArchitecture {
   bicepResources?: { resourceType: string; resourceName: string }[];
 }
 
-export type ParsedGroupType =
-  | 'region'
-  | 'landingZone'
-  | 'virtualNetwork'
-  | 'subnet'
-  | 'cluster'
-  | 'resourceGroup'
-  | 'networkSecurityGroup'
-  | 'securityBoundary'
-  | 'managementGroup'
-  | 'subscription'
-  | 'policyAssignment'
-  | 'roleAssignment'
-  | 'default';
 
 export interface ParsedGroup {
   id: string;
@@ -44,163 +34,487 @@ export interface ParsedGroup {
   sourceServiceId?: string;
 }
 
-// Comprehensive mapping from service names and Bicep resource types to exact icon titles
-const SERVICE_TO_ICON_MAPPINGS: { [key: string]: string } = {
-  // App Services
-  'app service': 'App Services',
-  'web app': 'App Services',
-  'azure app service': 'App Services',
-  'webApp': 'App Services',
-  'Microsoft.Web/sites': 'App Services',
-  
-  // Cosmos DB
-  'cosmos db': 'Azure Cosmos Db',
-  'azure cosmos db': 'Azure Cosmos Db',
-  'cosmosdb': 'Azure Cosmos Db',
-  'cosmos': 'Azure Cosmos Db',
-  'Microsoft.DocumentDB/databaseAccounts': 'Azure Cosmos Db',
-  
-  // SQL Database
-  'sql database': 'SQL Database',
-  'azure sql': 'SQL Database', 
-  'azure sql database': 'SQL Database',
-  'Microsoft.Sql/servers': 'SQL Server',
-  'Microsoft.Sql/servers/databases': 'SQL Database',
-  
-  // Storage
-  'storage account': 'Storage Accounts',
-  'storage accounts': 'Storage Accounts',
-  'azure storage': 'Storage Accounts',
-  'blob storage': 'Storage Accounts',
-  'azure blob storage': 'Storage Accounts',
-  'Microsoft.Storage/storageAccounts': 'Storage Accounts',
-  
-  // Functions
-  'function app': 'Function Apps',
-  'azure functions': 'Function Apps',
-  'functions': 'Function Apps',
-  'function apps': 'Function Apps',
-  'Microsoft.Web/sites/functions': 'Function Apps',
-  
-  // Application Gateway
-  'application gateway': 'Application Gateways',
-  'azure application gateway': 'Application Gateways',
-  'Microsoft.Network/applicationGateways': 'Application Gateways',
-  
-  // Virtual Network
-  'virtual network': 'Virtual Networks',
-  'vnet': 'Virtual Networks',
-  'azure vnet': 'Virtual Networks',
-  'Microsoft.Network/virtualNetworks': 'Virtual Networks',
-
-  // Subnet / NSG / Landing zone
-  'subnet': 'Subnet',
-  'network security group': 'Network Security Group',
-  'nsg': 'Network Security Group',
-  'landing zone': 'Landing Zone',
-  'landing-zone': 'Landing Zone',
-  'management group': 'Management Groups',
-  'management groups': 'Management Groups',
-  'subscription': 'Subscriptions',
-  'subscriptions': 'Subscriptions',
-  'policy assignment': 'Policy',
-  'policy definition': 'Policy',
-  'policy': 'Policy',
-  'role assignment': 'Entra Identity Roles And Administrators',
-  'rbac': 'Entra Identity Roles And Administrators',
-  
-  // Key Vault
-  'key vault': 'Key Vaults',
-  'azure key vault': 'Key Vaults',
-  'Microsoft.KeyVault/vaults': 'Key Vaults',
-  
-  // Service Bus
-  'service bus': 'Service Bus',
-  'azure service bus': 'Service Bus',
-  'Microsoft.ServiceBus/namespaces': 'Service Bus',
-  
-  // Redis Cache
-  'redis cache': 'Cache Redis',
-  'cache redis': 'Cache Redis',
-  'azure cache for redis': 'Cache Redis',
-  'Microsoft.Cache/Redis': 'Cache Redis',
-  
-  // Event Grid
-  'event grid': 'Event Grid Topics',
-  'azure event grid': 'Event Grid Topics',
-  'Microsoft.EventGrid/topics': 'Event Grid Topics',
-  
-  // API Management
-  'api management': 'API Management Services',
-  'azure api management': 'API Management Services',
-  'Microsoft.ApiManagement/service': 'API Management Services',
-  
-  // Container Registry
-  'container registry': 'Container Registries',
-  'azure container registry': 'Container Registries',
-  'Microsoft.ContainerRegistry/registries': 'Container Registries',
-  
-  // Kubernetes Service
-  'kubernetes service': 'Kubernetes Services',
-  'aks': 'Kubernetes Services',
-  'azure kubernetes service': 'Kubernetes Services',
-  'Microsoft.ContainerService/managedClusters': 'Kubernetes Services',
-  
-  // Resource Groups
-  'resource group': 'Resource Groups',
-  'resource groups': 'Resource Groups',
-  'Microsoft.Resources/resourceGroups': 'Resource Groups',
-  
-  // Service Plans
-  'app service plan': 'App Service Plans',
-  'service plan': 'App Service Plans',
-  'Microsoft.Web/serverfarms': 'App Service Plans',
-  
-  // Data Factory
-  'data factory': 'Data Factories',
-  'azure data factory': 'Data Factories',
-  'data factories': 'Data Factories',
-  
-  // Data Lake
-  'data lake storage': 'Data Lake Store Gen1',
-  'azure data lake storage': 'Data Lake Store Gen1',
-  'data lake store': 'Data Lake Store Gen1',
-  
-  // Exact Bicep resource type mappings
-  'microsoft.web/sites': 'App Services',
-  'microsoft.documentdb/databaseaccounts': 'Azure Cosmos Db',
-  'microsoft.web/serverfarms': 'App Service Plans',
-};
-
-const GROUP_TITLE_KEYWORDS: Array<{ keyword: string; type: ParsedGroupType }> = [
-  { keyword: 'landing zone', type: 'landingZone' },
-  { keyword: 'landing-zone', type: 'landingZone' },
-  { keyword: 'region', type: 'region' },
-  { keyword: 'virtual network', type: 'virtualNetwork' },
-  { keyword: 'vnet', type: 'virtualNetwork' },
-  { keyword: 'subnet', type: 'subnet' },
-  { keyword: 'private subnet', type: 'subnet' },
-  { keyword: 'public subnet', type: 'subnet' },
-  { keyword: 'network security group', type: 'networkSecurityGroup' },
-  { keyword: 'nsg', type: 'networkSecurityGroup' },
-  { keyword: 'cluster', type: 'cluster' },
-  { keyword: 'aks cluster', type: 'cluster' },
-  { keyword: 'resource group', type: 'resourceGroup' },
-  { keyword: 'security boundary', type: 'securityBoundary' },
-  { keyword: 'management group', type: 'managementGroup' },
-  { keyword: 'tenant root', type: 'managementGroup' },
-  { keyword: 'subscription', type: 'subscription' },
-  { keyword: 'policy assignment', type: 'policyAssignment' },
-  { keyword: 'policy definition', type: 'policyAssignment' },
-  { keyword: 'role assignment', type: 'roleAssignment' },
-  { keyword: 'rbac role', type: 'roleAssignment' },
-];
-
 export class ArchitectureParser {
   /**
    * Parse AI response and extract Azure services and their relationships
    */
+  private static extractDiagramJsonBlock(response: string): string | null {
+    if (!response) return null;
+    const fencedMatch = response.match(/Diagram JSON\s*```json\s*([\s\S]*?)```/i);
+    if (fencedMatch?.[1]) {
+      return fencedMatch[1].trim();
+    }
+
+    const markerIndex = response.toLowerCase().indexOf('diagram json');
+    if (markerIndex === -1) {
+      return null;
+    }
+    const braceStart = response.indexOf('{', markerIndex);
+    if (braceStart === -1) {
+      return null;
+    }
+    let depth = 0;
+    for (let i = braceStart; i < response.length; i += 1) {
+      const char = response[i];
+      if (char === '{') {
+        depth += 1;
+      } else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          return response.slice(braceStart, i + 1);
+        }
+      }
+    }
+    return null;
+  }
+
+  private static convertStructuredDiagram(data: unknown): ParsedArchitecture | null {
+    if (!data || typeof data !== 'object') {
+      return null;
+    }
+
+    const diagram = data as Record<string, unknown>;
+    const rawServices = Array.isArray(diagram.services) ? diagram.services : [];
+    const rawGroups = Array.isArray(diagram.groups) ? diagram.groups : [];
+    const rawConnections = Array.isArray(diagram.connections) ? diagram.connections : [];
+
+    const toStringSafe = (value: unknown): string | undefined => {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      }
+      return undefined;
+    };
+
+    const toSlug = (value: string): string =>
+      value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+    const services: AzureService[] = [];
+    const groups: ParsedGroup[] = [];
+    const connections: { from: string; to: string; label?: string }[] = [];
+
+    const groupMap = new Map<string, ParsedGroup>();
+    const groupMembers = new Map<string, Set<string>>();
+    const groupIdsFromJson = new Set<string>(
+      rawGroups
+        .map((entry) => (entry && typeof entry === 'object' ? toStringSafe((entry as Record<string, unknown>).id) : undefined))
+        .filter((id): id is string => !!id)
+    );
+
+    const resolveAzureServiceByIdOrTitle = (id?: string, title?: string): AzureService | null => {
+      const idMatch = id ? azureServices.find((service) => service.id === id) : undefined;
+      if (idMatch) {
+        return { ...idMatch };
+      }
+      if (title) {
+        const titleMatch = this.findAzureServiceByName(title);
+        if (titleMatch) {
+          return { ...titleMatch };
+        }
+      }
+      return null;
+    };
+
+    rawGroups.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return;
+      }
+      const groupEntry = entry as Record<string, unknown>;
+      const groupId = toStringSafe(groupEntry.id) || `group:${toSlug(toStringSafe(groupEntry.label) || toStringSafe(groupEntry.title) || 'group')}`;
+      const label = toStringSafe(groupEntry.label) || toStringSafe(groupEntry.title) || groupId;
+      if (!groupId || !label) {
+        return;
+      }
+
+      const detectedType =
+        toStringSafe(groupEntry.type) ||
+        toStringSafe(groupEntry.groupType) ||
+        undefined;
+      const groupType =
+        (detectedType ? this.detectGroupType(detectedType) : null) ||
+        this.detectGroupType(label) ||
+        'default';
+
+      const matchedService = resolveAzureServiceByIdOrTitle(groupId, label);
+      const metadata = matchedService
+        ? {
+            category: matchedService.category,
+            iconPath: matchedService.iconPath,
+          }
+        : undefined;
+
+      const parsedGroup: ParsedGroup = {
+        id: groupId,
+        label,
+        type: groupType,
+        members: [],
+        parentId: toStringSafe(groupEntry.parentId ?? (groupEntry as Record<string, unknown>).parent_id) ?? undefined,
+        metadata,
+        sourceServiceId: matchedService?.id,
+      };
+
+      const rawMembers = groupEntry.members;
+      if (Array.isArray(rawMembers)) {
+        const memberSet = new Set<string>();
+        rawMembers.forEach((member) => {
+          const memberId = toStringSafe(member);
+          if (memberId) {
+            memberSet.add(memberId);
+          }
+        });
+        groupMembers.set(groupId, memberSet);
+      } else {
+        groupMembers.set(groupId, new Set<string>());
+      }
+
+      groups.push(parsedGroup);
+      groupMap.set(groupId, parsedGroup);
+    });
+
+    const servicesByTitle = new Map<string, string>();
+    const servicesById = new Map<string, AzureService>();
+    const serviceGroupHints = new Map<string, Set<string>>();
+    const autoCreatedGroups = new Set<string>();
+
+    const registerServiceGroup = (serviceId: string, groupId: string) => {
+      if (!groupId || groupId === serviceId) {
+        return;
+      }
+      if (!serviceGroupHints.has(serviceId)) {
+        serviceGroupHints.set(serviceId, new Set<string>());
+      }
+      serviceGroupHints.get(serviceId)!.add(groupId);
+    };
+
+    const ensureContainerGroup = (service: AzureService, potentialParents: string[]) => {
+      const groupId = service.id;
+      let containerGroup = groupMap.get(groupId);
+      if (!containerGroup) {
+        containerGroup = {
+          id: groupId,
+          label: service.title || groupId,
+          type: this.detectGroupType(service.title || groupId) ?? 'default',
+          members: [],
+          parentId: undefined,
+          metadata: {
+            category: service.category,
+            iconPath: service.iconPath,
+          },
+          sourceServiceId: service.id,
+        };
+        groups.push(containerGroup);
+        groupMap.set(groupId, containerGroup);
+        autoCreatedGroups.add(groupId);
+      } else {
+        if (!containerGroup.metadata) {
+          containerGroup.metadata = {
+            category: service.category,
+            iconPath: service.iconPath,
+          };
+        }
+        if (!containerGroup.sourceServiceId) {
+          containerGroup.sourceServiceId = service.id;
+        }
+      }
+
+      const validParents = potentialParents.filter((parentId) => parentId && parentId !== groupId);
+      if (validParents.length && !containerGroup.parentId) {
+        containerGroup.parentId = validParents[0];
+      }
+
+      validParents.forEach((parentId) => registerServiceGroup(groupId, parentId));
+    };
+
+    rawServices.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return;
+      }
+      const serviceEntry = entry as Record<string, unknown>;
+      const explicitId = toStringSafe(serviceEntry.id);
+      const title = toStringSafe(serviceEntry.title);
+      const pendingGroupIds: string[] = [];
+      const rawGroupIds = serviceEntry.groupIds ?? serviceEntry.groupId ?? serviceEntry.groups;
+      if (Array.isArray(rawGroupIds)) {
+        rawGroupIds.forEach((groupIdCandidate) => {
+          const groupId = toStringSafe(groupIdCandidate);
+          if (groupId) {
+            pendingGroupIds.push(groupId);
+          }
+        });
+      } else if (rawGroupIds) {
+        const groupId = toStringSafe(rawGroupIds);
+        if (groupId) {
+          pendingGroupIds.push(groupId);
+        }
+      }
+
+      const uniqueGroupIds = Array.from(new Set(pendingGroupIds));
+      const resolvedService = resolveAzureServiceByIdOrTitle(explicitId, title);
+
+      const isContainer = (candidateId?: string, labelHint?: string) => {
+        if (!candidateId) return false;
+        const group = groupMap.get(candidateId);
+        if (group && group.type !== 'default') {
+          return true;
+        }
+        const detected = this.detectGroupType(labelHint || candidateId);
+        return !!detected;
+      };
+
+      if (!resolvedService) {
+        const fallbackTitle = title || explicitId || 'AI Detected Service';
+        const slug = toSlug(fallbackTitle);
+        const stub: AzureService = {
+          id: explicitId || `ai:${slug}`,
+          type: explicitId || `ai.detected/${slug}`,
+          category: toStringSafe(serviceEntry.category) || 'AI Detected',
+          categoryId: toStringSafe(serviceEntry.categoryId) || 'ai-detected',
+          title: fallbackTitle,
+          iconPath: '',
+          description: toStringSafe(serviceEntry.description) || 'Detected by AI from structured response',
+          publicIp: null,
+          privateIp: null,
+        };
+        const canonicalId = stub.id;
+        if (isContainer(canonicalId, fallbackTitle)) {
+          ensureContainerGroup(stub, uniqueGroupIds);
+          return;
+        }
+
+        uniqueGroupIds.forEach((groupId) => registerServiceGroup(canonicalId, groupId));
+
+        if (!groupIdsFromJson.has(canonicalId)) {
+          services.push(stub);
+          servicesById.set(canonicalId, stub);
+          servicesByTitle.set(stub.title.toLowerCase(), canonicalId);
+        }
+        return;
+      }
+
+      const clone: AzureService = {
+        ...resolvedService,
+        description: toStringSafe(serviceEntry.description) || resolvedService.description,
+      };
+
+      const canonicalId = clone.id;
+      if (isContainer(canonicalId, clone.title)) {
+        ensureContainerGroup(clone, uniqueGroupIds);
+        return;
+      }
+
+      uniqueGroupIds.forEach((groupId) => registerServiceGroup(canonicalId, groupId));
+
+      servicesById.set(clone.id, clone);
+      servicesByTitle.set((clone.title || '').toLowerCase(), clone.id);
+
+      if (!groupIdsFromJson.has(clone.id)) {
+        services.push(clone);
+      }
+    });
+
+    serviceGroupHints.forEach((groupIds, serviceKey) => {
+      const resolvedServiceId =
+        servicesById.has(serviceKey) ? serviceKey : servicesByTitle.get(serviceKey.toLowerCase()) || serviceKey;
+      groupIds.forEach((groupIdValue) => {
+        const group = groupMap.get(groupIdValue);
+        if (group) {
+          group.members.push(resolvedServiceId);
+        } else {
+          const fallbackGroup: ParsedGroup = {
+            id: groupIdValue,
+            label: groupIdValue,
+            type: this.detectGroupType(groupIdValue) ?? 'default',
+            members: [resolvedServiceId],
+          };
+          groups.push(fallbackGroup);
+          groupMap.set(groupIdValue, fallbackGroup);
+        }
+      });
+    });
+
+    const groupsByType = new Map<ParsedGroupType, ParsedGroup[]>();
+    groups.forEach((group) => {
+      const type = group.type ?? 'default';
+      if (!groupsByType.has(type)) {
+        groupsByType.set(type, []);
+      }
+      groupsByType.get(type)!.push(group);
+    });
+
+    const parentPreferences: Record<ParsedGroupType | 'default', ParsedGroupType[]> = {
+      managementGroup: [],
+      subscription: ['managementGroup'],
+      landingZone: ['subscription', 'managementGroup'],
+      region: ['landingZone', 'subscription', 'managementGroup'],
+      resourceGroup: ['region', 'landingZone', 'subscription', 'managementGroup'],
+      virtualNetwork: ['region', 'landingZone', 'subscription'],
+      subnet: ['virtualNetwork', 'region', 'landingZone'],
+      cluster: ['resourceGroup', 'region', 'landingZone', 'subscription'],
+      networkSecurityGroup: ['virtualNetwork', 'resourceGroup', 'subscription'],
+      securityBoundary: ['resourceGroup', 'subscription', 'managementGroup'],
+      policyAssignment: ['managementGroup', 'subscription'],
+      roleAssignment: ['managementGroup', 'subscription'],
+      default: ['resourceGroup', 'landingZone', 'subscription', 'managementGroup'],
+    };
+
+    const ensureParentMembership = (childId: string, parentId: string) => {
+      const parent = groupMap.get(parentId);
+      if (!parent) return;
+      parent.members = parent.members || [];
+      if (!parent.members.includes(childId)) {
+        parent.members.push(childId);
+      }
+    };
+
+    groups.forEach((group) => {
+      if (group.parentId) {
+        ensureParentMembership(group.id, group.parentId);
+        return;
+      }
+      const preferences = parentPreferences[group.type ?? 'default'] ?? parentPreferences.default;
+      for (const candidateType of preferences) {
+        const candidates = groupsByType.get(candidateType);
+        if (!candidates || candidates.length === 0) continue;
+        const candidate = candidates.find((item) => item.id !== group.id);
+        if (candidate) {
+          group.parentId = candidate.id;
+          ensureParentMembership(group.id, candidate.id);
+          break;
+        }
+      }
+    });
+
+    groups.forEach((group) => {
+      const memberSet = groupMembers.get(group.id);
+      if (memberSet) {
+        memberSet.forEach((memberId) => {
+          group.members.push(memberId);
+        });
+      }
+      group.members = Array.from(new Set(group.members));
+    });
+
+    const serviceIdSet = new Set<string>(services.map((service) => service.id));
+    groups.forEach((group) => {
+      group.members = group.members.filter((memberId) => serviceIdSet.has(memberId) || groupMap.has(memberId));
+    });
+    const resolveConnectionId = (candidate: unknown): string | null => {
+      const direct = toStringSafe(candidate);
+      if (!direct) {
+        return null;
+      }
+      if (serviceIdSet.has(direct)) {
+        return direct;
+      }
+      const alias = servicesByTitle.get(direct.toLowerCase());
+      if (alias) {
+        return alias;
+      }
+      if (groupMap.has(direct)) {
+        return direct;
+      }
+      return null;
+    };
+
+    rawConnections.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return;
+      }
+      const connectionEntry = entry as Record<string, unknown>;
+      const fromId = resolveConnectionId(connectionEntry.from ?? connectionEntry.source);
+      const toId = resolveConnectionId(connectionEntry.to ?? connectionEntry.target);
+      if (fromId && toId && fromId !== toId) {
+        connections.push({
+          from: fromId,
+          to: toId,
+          label: toStringSafe(connectionEntry.label) || undefined,
+        });
+      }
+    });
+
+    if (connections.length === 0) {
+      const connectSequence = (ids: string[]) => {
+        if (ids.length < 2) return;
+        for (let i = 0; i < ids.length - 1; i += 1) {
+          const fromId = ids[i];
+          const toId = ids[i + 1];
+          if (fromId !== toId) {
+            connections.push({ from: fromId, to: toId });
+          }
+        }
+      };
+
+      groups.forEach((group) => {
+        const serviceMembers = group.members.filter((memberId) => serviceIdSet.has(memberId));
+        connectSequence(serviceMembers);
+      });
+
+      const ungroupedServices = services
+        .map((service) => service.id)
+        .filter((serviceId) => !groups.some((group) => group.members.includes(serviceId)));
+      connectSequence(ungroupedServices);
+    }
+
+    const droppedConnections = rawConnections.length - connections.length;
+    const orphanGroups = groups.filter((group) => group.members.length === 0);
+    if (typeof console !== 'undefined') {
+      console.log('[ArchitectureParser] Structured diagram summary', {
+        services: services.length,
+        groups: groups.length,
+        connections: connections.length,
+        droppedConnections: droppedConnections > 0 ? droppedConnections : 0,
+        autoCreatedGroups: Array.from(autoCreatedGroups),
+        orphanGroups: orphanGroups.map((group) => group.id),
+      });
+    }
+
+    const layoutRaw = toStringSafe(diagram.layout);
+    const layout: ParsedArchitecture['layout'] =
+      layoutRaw && (layoutRaw === 'horizontal' || layoutRaw === 'vertical' || layoutRaw === 'grid')
+        ? layoutRaw
+        : services.length <= 3
+        ? 'horizontal'
+        : services.length <= 6
+        ? 'vertical'
+        : 'grid';
+
+    if (services.length === 0 && groups.length === 0) {
+      return null;
+    }
+
+    return {
+      services,
+      connections,
+      groups,
+      layout,
+    };
+  }
+
+  static parseStructuredDiagram(structured: unknown): ParsedArchitecture | null {
+    return this.convertStructuredDiagram(structured);
+  }
+
   static parseResponse(response: string): ParsedArchitecture {
+    const structuredBlock = this.extractDiagramJsonBlock(response);
+    if (structuredBlock) {
+      try {
+        const structuredData = JSON.parse(structuredBlock);
+        const structuredDiagram = this.convertStructuredDiagram(structuredData);
+        if (structuredDiagram) {
+          console.log('[ArchitectureParser] Using structured diagram JSON section');
+          console.log('[ArchitectureParser] parseResponse summary', {
+            serviceCount: structuredDiagram.services.length,
+            connectionCount: structuredDiagram.connections.length,
+            groupCount: structuredDiagram.groups?.length ?? 0,
+            services: structuredDiagram.services.map((svc) => svc.title),
+          });
+          return structuredDiagram;
+        }
+      } catch (error) {
+        console.warn('[ArchitectureParser] Failed to parse structured diagram JSON', error);
+      }
+    }
+
     const services: AzureService[] = [];
     const connections: { from: string; to: string; label?: string }[] = [];
     
@@ -225,6 +539,13 @@ export class ArchitectureParser {
     
     const { groups, refinedConnections } = this.buildGroupStructures(services, connections);
 
+    console.log('[ArchitectureParser] parseResponse summary', {
+      serviceCount: services.length,
+      connectionCount: refinedConnections.length,
+      groupCount: groups.length,
+      services: services.map((svc) => svc.title),
+    });
+
     return {
       services,
       connections: refinedConnections,
@@ -235,7 +556,7 @@ export class ArchitectureParser {
 
   private static detectGroupType(label?: string): ParsedGroupType | null {
     if (!label) return null;
-    const normalized = label.toLowerCase();
+    const normalized = label.toLowerCase().replace(/[\\/\-_]+/g, ' ');
     const match = GROUP_TITLE_KEYWORDS.find(({ keyword }) => normalized.includes(keyword));
     return match?.type ?? null;
   }
@@ -245,7 +566,14 @@ export class ArchitectureParser {
     connections: { from: string; to: string; label?: string }[]
   ): { groups: ParsedGroup[]; refinedConnections: { from: string; to: string; label?: string }[] } {
     if (!services || services.length === 0) {
-      return { groups: [], refinedConnections: connections };
+      console.log('[ArchitectureParser] parseResponse summary', {
+      serviceCount: services.length,
+      connectionCount: connections.length,
+      groupCount: 0,
+      services: services.map((svc) => svc.title),
+    });
+
+    return { groups: [], refinedConnections: connections };
     }
 
     const serviceMap = new Map(services.map((service) => [service.id, service]));
@@ -305,7 +633,14 @@ export class ArchitectureParser {
     }
 
     if (groups.length === 0) {
-      return { groups: [], refinedConnections: connections };
+      console.log('[ArchitectureParser] parseResponse summary', {
+      serviceCount: services.length,
+      connectionCount: connections.length,
+      groupCount: groups.length,
+      services: services.map((svc) => svc.title),
+    });
+
+    return { groups: [], refinedConnections: connections };
     }
 
     const groupOrder: ParsedGroupType[] = [
@@ -377,9 +712,197 @@ export class ArchitectureParser {
       );
     });
 
+    const groupTypeRank = new Map<ParsedGroupType, number>();
+    groupOrder.forEach((type, index) => groupTypeRank.set(type, index));
+
+    const nonContainerGroupTypes = new Set<ParsedGroupType>([
+      'policyAssignment',
+      'roleAssignment',
+    ]);
+
+    const finalMembers = new Map<string, Set<string>>();
+    const serviceAssignments = new Map<string, string>();
+
+    groups.forEach((group) => {
+      finalMembers.set(group.id, new Set<string>());
+    });
+
+    groups.forEach((group) => {
+      const members = finalMembers.get(group.id)!;
+      group.members.forEach((memberId) => {
+        if (groupMap.has(memberId)) {
+          members.add(memberId);
+          const childGroup = groupMap.get(memberId)!;
+          if (!childGroup.parentId || childGroup.parentId === group.id) {
+            childGroup.parentId = group.id;
+          }
+        } else if (serviceMap.has(memberId) && !nonContainerGroupTypes.has(group.type)) {
+          const existingGroupId = serviceAssignments.get(memberId);
+          if (!existingGroupId) {
+            serviceAssignments.set(memberId, group.id);
+            members.add(memberId);
+          } else if (existingGroupId !== group.id) {
+            const existingRank =
+              groupTypeRank.get(groupMap.get(existingGroupId)?.type ?? 'default') ?? 0;
+            const candidateRank = groupTypeRank.get(group.type) ?? 0;
+            if (candidateRank >= existingRank) {
+              finalMembers.get(existingGroupId)?.delete(memberId);
+              serviceAssignments.set(memberId, group.id);
+              members.add(memberId);
+            }
+          }
+        }
+      });
+    });
+
+    const GROUP_PARENT_FALLBACKS: Record<ParsedGroupType, ParsedGroupType[]> = {
+      managementGroup: [],
+      subscription: ['managementGroup'],
+      region: ['subscription', 'managementGroup'],
+      landingZone: ['subscription', 'managementGroup'],
+      resourceGroup: ['landingZone', 'subscription', 'managementGroup'],
+      virtualNetwork: ['resourceGroup', 'landingZone', 'subscription'],
+      subnet: ['virtualNetwork', 'resourceGroup'],
+      cluster: ['resourceGroup', 'landingZone'],
+      networkSecurityGroup: ['virtualNetwork', 'resourceGroup', 'landingZone'],
+      securityBoundary: ['managementGroup', 'subscription'],
+      policyAssignment: ['managementGroup', 'subscription', 'landingZone'],
+      roleAssignment: ['managementGroup', 'subscription', 'landingZone'],
+      default: ['landingZone', 'resourceGroup', 'subscription'],
+    };
+
+    const ensureGroupMembership = (parentId: string, childId: string) => {
+      const members = finalMembers.get(parentId);
+      if (!members) return;
+      members.add(childId);
+      const childGroup = groupMap.get(childId);
+      if (childGroup) {
+        childGroup.parentId = parentId;
+      }
+    };
+
+    groups.forEach((group) => {
+      if (group.parentId) {
+        ensureGroupMembership(group.parentId, group.id);
+        return;
+      }
+      const fallbacks = GROUP_PARENT_FALLBACKS[group.type] ?? [];
+      for (const parentType of fallbacks) {
+        const candidates = groups.filter(
+          (candidate) => candidate.type === parentType && candidate.id !== group.id
+        );
+        if (candidates.length === 0) continue;
+        const chosen = candidates.reduce((best, candidate) => {
+          const bestCount = finalMembers.get(best.id)?.size ?? 0;
+          const candidateCount = finalMembers.get(candidate.id)?.size ?? 0;
+          return candidateCount < bestCount ? candidate : best;
+        }, candidates[0]);
+        ensureGroupMembership(chosen.id, group.id);
+        break;
+      }
+    });
+
+    const adjacency = new Map<string, Set<string>>();
+    const addAdjacency = (a: string, b: string) => {
+      if (!adjacency.has(a)) {
+        adjacency.set(a, new Set<string>());
+      }
+      adjacency.get(a)!.add(b);
+    };
+
+    connections.forEach((connection) => {
+      addAdjacency(connection.from, connection.to);
+      addAdjacency(connection.to, connection.from);
+    });
+
+    const assignServiceToGroup = (serviceId: string, groupId: string) => {
+      const group = groupMap.get(groupId);
+      if (!group || nonContainerGroupTypes.has(group.type)) return false;
+      finalMembers.get(groupId)?.add(serviceId);
+      serviceAssignments.set(serviceId, groupId);
+      return true;
+    };
+
+    const containerFallbackOrder: ParsedGroupType[] = [
+      'resourceGroup',
+      'landingZone',
+      'virtualNetwork',
+      'subscription',
+      'managementGroup',
+      'default',
+    ];
+
+    const unassignedServices = services.filter(
+      (service) =>
+        !serviceAssignments.has(service.id) && !groupServiceIds.has(service.id)
+    );
+
+    unassignedServices.forEach((service) => {
+      const neighborScores = new Map<string, number>();
+      const neighbors = adjacency.get(service.id);
+      if (neighbors) {
+        neighbors.forEach((neighborId) => {
+          if (groupMap.has(neighborId)) {
+            const group = groupMap.get(neighborId)!;
+            if (!nonContainerGroupTypes.has(group.type)) {
+              neighborScores.set(group.id, (neighborScores.get(group.id) ?? 0) + 3);
+            }
+          }
+          const assignedGroupId = serviceAssignments.get(neighborId);
+          if (assignedGroupId) {
+            neighborScores.set(assignedGroupId, (neighborScores.get(assignedGroupId) ?? 0) + 1);
+          }
+        });
+      }
+
+      if (neighborScores.size > 0) {
+        let bestGroupId: string | null = null;
+        let bestScore = -Infinity;
+        neighborScores.forEach((score, groupId) => {
+          const group = groupMap.get(groupId);
+          if (!group || nonContainerGroupTypes.has(group.type)) return;
+          const rank = groupTypeRank.get(group.type) ?? 0;
+          const adjustedScore = score * 10 + rank;
+          if (adjustedScore > bestScore) {
+            bestScore = adjustedScore;
+            bestGroupId = groupId;
+          }
+        });
+        if (bestGroupId && assignServiceToGroup(service.id, bestGroupId)) {
+          return;
+        }
+      }
+
+      for (const fallbackType of containerFallbackOrder) {
+        const candidates = groups.filter(
+          (group) => group.type === fallbackType && !nonContainerGroupTypes.has(group.type)
+        );
+        if (candidates.length === 0) continue;
+        const chosen = candidates.reduce((best, candidate) => {
+          const bestSize = finalMembers.get(best.id)?.size ?? 0;
+          const candidateSize = finalMembers.get(candidate.id)?.size ?? 0;
+          return candidateSize < bestSize ? candidate : best;
+        }, candidates[0]);
+        if (assignServiceToGroup(service.id, chosen.id)) {
+          return;
+        }
+      }
+    });
+
+    groups.forEach((group) => {
+      group.members = Array.from(finalMembers.get(group.id) ?? new Set<string>());
+    });
+
     const refinedConnections = connections.filter(
       (connection) => !edgeMembership.has(edgeKey(connection.from, connection.to))
     );
+
+    console.log('[ArchitectureParser] parseResponse summary', {
+      serviceCount: services.length,
+      connectionCount: refinedConnections.length,
+      groupCount: groups.length,
+      services: services.map((svc) => svc.title),
+    });
 
     return { groups, refinedConnections };
   }
@@ -391,23 +914,7 @@ export class ArchitectureParser {
     const services: string[] = [];
     const lowerText = text.toLowerCase();
     
-    // Extract Bicep resource types - more comprehensive patterns
-    const bicepResourcePatterns = [
-      /Microsoft\.Web\/sites(?:\/\w+)?/gi,
-      /Microsoft\.DocumentDB\/databaseAccounts/gi,
-      /Microsoft\.Storage\/storageAccounts/gi,
-      /Microsoft\.Sql\/servers(?:\/databases)?/gi,
-      /Microsoft\.KeyVault\/vaults/gi,
-      /Microsoft\.Network\/virtualNetworks/gi,
-      /Microsoft\.Network\/applicationGateways/gi,
-      /Microsoft\.Web\/serverfarms/gi,
-      /Microsoft\.Cache\/Redis/gi,
-      /Microsoft\.ServiceBus\/namespaces/gi,
-      /Microsoft\.EventGrid\/topics/gi,
-      /Microsoft\.ApiManagement\/service/gi,
-      /Microsoft\.ContainerRegistry\/registries/gi,
-      /Microsoft\.ContainerService\/managedClusters/gi,
-    ];
+
     
     // Extract Bicep resource types and add them to services
     bicepResourcePatterns.forEach(pattern => {
@@ -419,28 +926,7 @@ export class ArchitectureParser {
       }
     });
     
-    // Common service name patterns in natural language
-    const serviceNamePatterns = [
-      /\b(azure\s+)?app\s+service\b/gi,
-      /\bweb\s+app\b/gi,
-      /\b(azure\s+)?cosmos\s+db\b/gi,
-      /\bcosmosdb\b/gi,
-      /\b(azure\s+)?sql\s+(database|server)\b/gi,
-      /\bstorage\s+account\b/gi,
-      /\bblob\s+storage\b/gi,
-      /\b(azure\s+)?function\s+app\b/gi,
-      /\b(azure\s+)?functions\b/gi,
-      /\b(azure\s+)?key\s+vault\b/gi,
-      /\bvirtual\s+network\b/gi,
-      /\bvnet\b/gi,
-      /\bresource\s+group\b/gi,
-      /\bapplication\s+gateway\b/gi,
-      /\bmanagement\s+group\b/gi,
-      /\bsubscription(s)?\b/gi,
-      /\bpolicy\s+(assignment|definition)\b/gi,
-      /\brole\s+assignment\b/gi,
-      /\brbac\b/gi,
-    ];
+
     
     // Extract natural language service names
     serviceNamePatterns.forEach(pattern => {
@@ -668,15 +1154,7 @@ export class ArchitectureParser {
   ): { from: string; to: string; label?: string }[] {
     const connections: { from: string; to: string; label?: string }[] = [];
     
-    // Enhanced pattern matching for connections
-    const connectionPatterns = [
-      // Direct connection words
-      /(\w+(?:\s+\w+)*)\s+(?:connects?\s+to|talks?\s+to|calls?|uses?|accesses?|queries?|stores?\s+data\s+in)\s+(\w+(?:\s+\w+)*)/gi,
-      // Arrow patterns
-      /(\w+(?:\s+\w+)*)\s*(?:<-->|->|→)\s*(\w+(?:\s+\w+)*)/gi,
-      // Bicep dependencies - look for dependsOn patterns
-      /dependsOn:\s*\[?\s*(\w+)\s*\]?/gi,
-    ];
+
     
     connectionPatterns.forEach(pattern => {
       let match;
@@ -707,92 +1185,64 @@ export class ArchitectureParser {
     services: AzureService[], 
     connections: { from: string; to: string; label?: string }[]
   ): void {
-  const servicesByTitle = new Map(services.map(s => [(s.title || '').toLowerCase(), s]));
-    
-    // Common connection patterns
-    const patterns = [
-      // App Service typically connects to databases
-      {
-        from: ['app services', 'app service'],
-        to: ['azure cosmos db', 'sql database', 'mysql', 'postgresql'],
-        label: 'data access'
-      },
-      // Subscriptions enforce policy assignments
-      {
-        from: ['policy'],
-        to: ['subscriptions', 'management groups', 'landing zone'],
-        label: 'policy scope'
-      },
-      // Role assignments apply to subscriptions/landing zones
-      {
-        from: ['entra identity roles and administrators'],
-        to: ['subscriptions', 'resource groups', 'landing zone'],
-        label: 'rbac'
-      },
-      // App Service connects to App Service Plan
-      {
-        from: ['app services'],
-        to: ['app service plans'],
-        label: 'hosted on'
-      },
-      // Services connect to Key Vault for secrets
-      {
-        from: ['app services', 'function app', 'azure cosmos db'],
-        to: ['key vaults'],
-        label: 'secrets'
-      },
-      // Function App connects to Storage
-      {
-        from: ['function app'],
-        to: ['storage accounts'],
-        label: 'runtime storage'
-      },
-      // API Management in front of services
-      {
-        from: ['api management services'],
-        to: ['app services', 'function app'],
-        label: 'api gateway'
-      },
-      // Application Gateway load balances
-      {
-        from: ['application gateways'],
-        to: ['app services'],
-        label: 'load balancer'
-      },
-      // Management group scopes subscriptions
-      {
-        from: ['management groups'],
-        to: ['subscriptions'],
-        label: 'scope'
-      },
-      // Subscriptions contain landing zones and resource groups
-      {
-        from: ['subscriptions'],
-        to: ['landing zone', 'resource groups'],
-        label: 'contains'
-      },
-      // Landing zones include virtual networks
-      {
-        from: ['landing zone'],
-        to: ['virtual networks', 'virtual network', 'subnet'],
-        label: 'network'
+    const servicesByTitle = new Map(services.map(s => [(s.title || '').toLowerCase(), s]));
+    const aliasToCanonical: Record<string, string> = {
+      'app service': 'app services',
+      'virtual network': 'virtual networks',
+      'stream analytics': 'stream analytics jobs',
+      'azure stream analytics': 'stream analytics jobs',
+      'synapse': 'azure synapse analytics',
+      'synapse workspace': 'azure synapse analytics',
+      'azure synapse': 'azure synapse analytics',
+      'event hub': 'event hubs',
+      'azure event hub': 'event hubs',
+      'iot hub': 'azure iot hub',
+      'azure iot hub': 'azure iot hub',
+      'managed identity': 'managed identities',
+    };
+
+    Object.entries(aliasToCanonical).forEach(([alias, canonical]) => {
+      const canonicalService = servicesByTitle.get(canonical);
+      if (canonicalService) {
+        servicesByTitle.set(alias, canonicalService);
       }
-    ];
+    });
+
+    const findServiceForAlias = (alias: string): AzureService | null => {
+      const key = alias.toLowerCase();
+      if (servicesByTitle.has(key)) {
+        return servicesByTitle.get(key)!;
+      }
+      for (const [title, service] of servicesByTitle.entries()) {
+        if (title === key || title.includes(key) || key.includes(title)) {
+          return service;
+        }
+      }
+      return null;
+    };
     
-    patterns.forEach(pattern => {
-      pattern.from.forEach(fromTitle => {
-        pattern.to.forEach(toTitle => {
-          const fromService = servicesByTitle.get(fromTitle);
-          const toService = servicesByTitle.get(toTitle);
-          
-          if (fromService && toService && 
-              !connections.find(c => c.from === fromService.id && c.to === toService.id)) {
-            connections.push({
-              from: fromService.id,
-              to: toService.id,
-              label: pattern.label
-            });
+
+    
+    patterns.forEach((pattern) => {
+      pattern.from.forEach((fromAlias) => {
+        const fromService = findServiceForAlias(fromAlias);
+        if (!fromService) {
+          return;
+        }
+        pattern.to.forEach((toAlias) => {
+          const toService = findServiceForAlias(toAlias);
+          if (
+            !toService ||
+            fromService.id === toService.id ||
+            connections.some((c) => c.from === fromService.id && c.to === toService.id)
+          ) {
+            return;
           }
+          connections.push({
+            from: fromService.id,
+            to: toService.id,
+            label: pattern.label,
+          });
         });
       });
     });
@@ -865,20 +1315,31 @@ export class ArchitectureParser {
       }
     });
 
-    const computeGroupDepth = (groupId: string, cache = new Map<string, number>()): number => {
-      if (cache.has(groupId)) return cache.get(groupId)!;
-      const group = groupMap.get(groupId);
-      if (!group) {
-        cache.set(groupId, 0);
+    const depthCache = new Map<string, number>();
+    const visitedStack = new Set<string>();
+
+    const computeGroupDepth = (groupId: string): number => {
+      if (depthCache.has(groupId)) {
+        return depthCache.get(groupId)!;
+      }
+      if (visitedStack.has(groupId)) {
+        console.warn('[ArchitectureParser] Detected circular group hierarchy', { groupId });
+        depthCache.set(groupId, 0);
         return 0;
       }
-      const depth = group.parentId ? computeGroupDepth(group.parentId, cache) + 1 : 0;
-      cache.set(groupId, depth);
+
+      visitedStack.add(groupId);
+      const group = groupMap.get(groupId);
+      let depth = 0;
+      if (group && group.parentId && groupMap.has(group.parentId)) {
+        depth = computeGroupDepth(group.parentId) + 1;
+      }
+      depthCache.set(groupId, depth);
+      visitedStack.delete(groupId);
       return depth;
     };
 
-    const depthCache = new Map<string, number>();
-    groups.forEach((group) => computeGroupDepth(group.id, depthCache));
+    groups.forEach((group) => computeGroupDepth(group.id));
 
     const serviceParent = new Map<string, string>();
     groups.forEach((group) => {
@@ -928,10 +1389,29 @@ export class ArchitectureParser {
 
     const layoutInfoMap = new Map<string, GroupLayoutInfo>();
 
+    // Protect against circular child-parent relationships during measurement
+    const measuringStack = new Set<string>();
+
     const measureGroup = (groupId: string): GroupLayoutInfo => {
       if (layoutInfoMap.has(groupId)) {
         return layoutInfoMap.get(groupId)!;
       }
+
+      // If we're already measuring this group, we've detected a cycle. Return a safe fallback.
+      if (measuringStack.has(groupId)) {
+        console.warn('[ArchitectureParser] Detected circular group measurement', { groupId });
+        const fallback: GroupLayoutInfo = {
+          width: 360,
+          height: 240,
+          serviceIds: [],
+          childGroupIds: [],
+          columns: 1,
+        };
+        layoutInfoMap.set(groupId, fallback);
+        return fallback;
+      }
+
+      measuringStack.add(groupId);
 
       const group = groupMap.get(groupId);
       if (!group) {
@@ -943,6 +1423,7 @@ export class ArchitectureParser {
           columns: 1,
         };
         layoutInfoMap.set(groupId, empty);
+        measuringStack.delete(groupId);
         return empty;
       }
 
@@ -952,7 +1433,25 @@ export class ArchitectureParser {
 
       const serviceIds = group.members.filter((memberId) => serviceMap.has(memberId));
 
-      const measuredChildGroups = childGroupIds.map((childId) => measureGroup(childId));
+      const measuredChildGroups: GroupLayoutInfo[] = [];
+      for (const childId of childGroupIds) {
+        if (measuringStack.has(childId)) {
+          // Break the cycle by using a conservative fallback for the child
+          console.warn('[ArchitectureParser] Skipping recursive child measurement due to cycle', {
+            groupId,
+            childId,
+          });
+          measuredChildGroups.push({
+            width: 360,
+            height: 240,
+            serviceIds: [],
+            childGroupIds: [],
+            columns: 1,
+          });
+        } else {
+          measuredChildGroups.push(measureGroup(childId));
+        }
+      }
 
       const serviceCount = serviceIds.length;
       const columns =
@@ -995,6 +1494,7 @@ export class ArchitectureParser {
       };
 
       layoutInfoMap.set(groupId, computed);
+      measuringStack.delete(groupId);
       return computed;
     };
 
@@ -1076,6 +1576,11 @@ export class ArchitectureParser {
         const service = serviceMap.get(serviceId);
         if (!service) return;
 
+        // Skip services that are also groups (to prevent duplicate nodes)
+        if ((service as unknown as { __isGroup?: boolean }).__isGroup || groupMap.has(service.id)) {
+          return;
+        }
+
         const column = index % serviceColumns;
         const row = Math.floor(index / serviceColumns);
 
@@ -1089,7 +1594,7 @@ export class ArchitectureParser {
           id: service.id,
           type: 'azure.service',
           position: { x: xOffset, y: yOffset },
-          parentNode: group.id,
+          parentId: group.id,
           extent: 'parent',
           data: {
             title: service.title,
@@ -1218,7 +1723,7 @@ export class ArchitectureParser {
         };
       
       case 'vertical':
-        return {
+        return {   
           x: 100,
           y: index * 150,
         };
@@ -1238,3 +1743,9 @@ export class ArchitectureParser {
     }
   }
 }
+
+
+
+
+
+

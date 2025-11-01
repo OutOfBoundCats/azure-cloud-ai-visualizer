@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.azure_client import AzureClientManager
 
@@ -31,7 +31,8 @@ class ChatRequest(BaseModel):
     """Chat request model."""
     message: str
     conversation_id: str | None = None
-    context: Dict[str, Any] = {}  # Can include diagram data, project info, etc.
+    conversation_history: List[Dict[str, Any]] | None = None
+    context: Dict[str, Any] = Field(default_factory=dict)  # Can include diagram data, project info, etc.
 
 
 class ChatResponse(BaseModel):
@@ -69,7 +70,7 @@ async def send_message(
         conversation_id = chat_request.conversation_id or str(uuid4())
         
         # Load existing conversation if available
-        conversation_history = []
+        conversation_history: List[Dict[str, Any]] = []
         if chat_request.conversation_id:
             try:
                 conversation = await _load_conversation(conversation_id, azure_clients)
@@ -77,26 +78,26 @@ async def send_message(
             except HTTPException:
                 # Conversation not found, start fresh
                 pass
-        
+        if chat_request.conversation_history:
+            conversation_history.extend(chat_request.conversation_history)
+
         # Get the agent
         agent = azure_clients.get_azure_architect_agent()
-        
-        # Add context to message if provided
-        enhanced_message = chat_request.message
-        if chat_request.context:
-            context_str = json.dumps(chat_request.context, indent=2)
-            enhanced_message = f"Context: {context_str}\n\nUser: {chat_request.message}"
-        
-        # Send message to agent
-        response = await agent.chat(enhanced_message, conversation_history)
+
+        # Send message to agent with contextual summary/history
+        response_text = await agent.chat(
+            chat_request.message,
+            conversation_history=conversation_history,
+            context=chat_request.context or None,
+        )
         
         # Create response
         now = datetime.utcnow()
         chat_response = ChatResponse(
-            message=response,
+            message=response_text,
             conversation_id=conversation_id,
             timestamp=now,
-            suggestions=_generate_suggestions(response)
+            suggestions=_generate_suggestions(response_text)
         )
         
         # Save conversation
@@ -108,7 +109,7 @@ async def send_message(
         )
         await _save_conversation_message(
             conversation_id,
-            ChatMessage(role="assistant", content=response),
+            ChatMessage(role="assistant", content=response_text),
             azure_clients,
             project_id
         )

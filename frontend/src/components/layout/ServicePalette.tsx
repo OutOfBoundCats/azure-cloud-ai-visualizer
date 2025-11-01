@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Icon } from '@iconify/react';
 import { azureServices, serviceCategories } from '@/data/azureServices';
 import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Accordion,
   AccordionItem,
@@ -138,7 +139,7 @@ const ServicePalette = () => {
 
       {/* Make the middle area scrollable so Group Templates and services list
           can both be scrolled to the end on small viewports */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
+      <ScrollArea className="flex-1 p-2 space-y-2 min-h-0">
         <div className="border-b border-border/10 pb-2">
           <Accordion type="single" collapsible>
             <AccordionItem value="group-templates">
@@ -190,9 +191,9 @@ const ServicePalette = () => {
               </AccordionContent>
             </AccordionItem>
           </Accordion>
-        </div>
+  </div>
 
-        <div className="space-y-1">
+  <div className="space-y-1">
           {filteredServices.map((service) => (
             <div
               key={service.id}
@@ -215,7 +216,7 @@ const ServicePalette = () => {
             </div>
           ))}
         </div>
-      </div>
+      </ScrollArea>
     </aside>
   );
 };

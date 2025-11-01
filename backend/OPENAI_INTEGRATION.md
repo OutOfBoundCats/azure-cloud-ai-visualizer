@@ -76,6 +76,24 @@ response = await agent.chat(
 )
 ```
 
+## Testing
+
+### Quick Test Script
+
+Run the provided test script to validate your configuration:
+
+```bash
+cd backend
+python test_openai.py
+```
+
+This will:
+- ✅ Check configuration settings
+- ✅ Test agent initialization
+- ✅ Validate chat functionality
+- ✅ Test ReactFlow generation
+- ✅ Check vision capabilities
+
 ### Manual Testing
 
 1. Start the backend server:

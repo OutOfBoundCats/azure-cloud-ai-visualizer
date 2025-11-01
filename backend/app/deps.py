@@ -2,13 +2,24 @@
 
 import os
 import logging
+import time
+import asyncio
 from typing import Optional
+
+try:
+    import httpx
+except ImportError:  # pragma: no cover
+    httpx = None
 
 logger = logging.getLogger(__name__)
 
 # Global MCP tool instances for connection pooling
 _mcp_bicep_tool: Optional[object] = None
 _mcp_terraform_tool: Optional[object] = None
+_microsoft_docs_mcp_tool: Optional[object] = None
+_mcp_terraform_backoff_until: Optional[float] = None
+_mcp_bicep_backoff_until: Optional[float] = None
+_microsoft_docs_backoff_until: Optional[float] = None
 
 
 async def get_mcp_bicep_tool():
@@ -17,7 +28,15 @@ async def get_mcp_bicep_tool():
     Opens a persistent connection to the Azure Bicep MCP server for
     schema lookups and validation during IaC generation.
     """
-    global _mcp_bicep_tool
+    global _mcp_bicep_tool, _mcp_bicep_backoff_until
+
+    if _mcp_bicep_backoff_until and time.time() < _mcp_bicep_backoff_until:
+        if _mcp_bicep_tool is None:
+            logger.debug(
+                "Skipping Azure Bicep MCP initialization until %.0f due to previous errors",
+                _mcp_bicep_backoff_until,
+            )
+        return _mcp_bicep_tool
     if _mcp_bicep_tool is None:
         try:
             from app.core.config import settings
@@ -44,16 +63,25 @@ async def get_mcp_bicep_tool():
             # Open connection once and reuse
             enter_method = getattr(_mcp_bicep_tool, '__aenter__', None)
             if enter_method:
-                await enter_method()
+                try:
+                    await enter_method()
+                except (Exception, asyncio.CancelledError) as exc:  # pragma: no cover - network dependent
+                    logger.warning("Failed to initialize Azure Bicep MCP tool (%s). Falling back to local generation.", exc)
+                    _mcp_bicep_tool = None
+                    _mcp_bicep_backoff_until = time.time() + 300
+                    return None
             logger.info(f"Initialized Azure Bicep MCP tool at {mcp_url}")
+            _mcp_bicep_backoff_until = None
 
         except ImportError:
             logger.warning("MCPStreamableHTTPTool not installed - MCP integration disabled.\n" \
                            "Install the agent_framework package that provides MCPStreamableHTTPTool to enable MCP features.")
             _mcp_bicep_tool = None
+            _mcp_bicep_backoff_until = None
         except Exception as e:
             logger.error(f"Failed to initialize MCP Bicep tool: {e}")
             _mcp_bicep_tool = None
+            _mcp_bicep_backoff_until = time.time() + 300
     
     return _mcp_bicep_tool
 
@@ -64,7 +92,15 @@ async def get_mcp_terraform_tool():
     Opens a persistent connection to the HashiCorp Terraform MCP server for
     provider/resource schema lookups and validation during Terraform generation.
     """
-    global _mcp_terraform_tool
+    global _mcp_terraform_tool, _mcp_terraform_backoff_until
+
+    if _mcp_terraform_backoff_until and time.time() < _mcp_terraform_backoff_until:
+        if _mcp_terraform_tool is None:
+            logger.debug(
+                "Skipping Terraform MCP initialization until %.0f due to previous rate limiting",
+                _mcp_terraform_backoff_until,
+            )
+        return _mcp_terraform_tool
     if _mcp_terraform_tool is None:
         try:
             from app.core.config import settings
@@ -92,13 +128,35 @@ async def get_mcp_terraform_tool():
             if enter_method:
                 await enter_method()
             logger.info(f"Initialized HashiCorp Terraform MCP tool at {mcp_url}")
+            _mcp_terraform_backoff_until = None
 
         except ImportError:
             logger.warning("MCPStreamableHTTPTool not installed - Terraform MCP integration disabled.\n" \
                            "Install the agent_framework package that provides MCPStreamableHTTPTool to enable MCP features.")
             _mcp_terraform_tool = None
-        except Exception as e:
-            logger.error(f"Failed to initialize MCP Terraform tool: {e}")
+            _mcp_terraform_backoff_until = None
+        except (Exception, asyncio.CancelledError) as e:
+            _mcp_terraform_tool = None
+            backoff_seconds = 300
+            is_rate_limited = False
+            if httpx is not None and isinstance(e, httpx.HTTPStatusError):
+                status = getattr(e.response, "status_code", None)
+                if status == 429:
+                    is_rate_limited = True
+            if "429" in str(e):
+                is_rate_limited = True
+
+            if is_rate_limited:
+                logger.warning(
+                    "Terraform MCP server returned HTTP 429 (rate limit). Falling back to local generation and sleeping for %s seconds.",
+                    backoff_seconds,
+                )
+                _mcp_terraform_backoff_until = time.time() + backoff_seconds
+            else:
+                logger.error(f"Failed to initialize MCP Terraform tool: {e}")
+                # Avoid hammering the endpoint repeatedly; back off briefly.
+                _mcp_terraform_backoff_until = time.time() + 60
+
             _mcp_terraform_tool = None
     
     return _mcp_terraform_tool
@@ -106,7 +164,7 @@ async def get_mcp_terraform_tool():
 
 async def cleanup_mcp_tools():
     """Clean up MCP tool connections on app shutdown."""
-    global _mcp_bicep_tool, _mcp_terraform_tool
+    global _mcp_bicep_tool, _mcp_terraform_tool, _microsoft_docs_mcp_tool
     
     # Clean up Bicep MCP tool
     if _mcp_bicep_tool is not None:
@@ -131,3 +189,71 @@ async def cleanup_mcp_tools():
             logger.warning(f"Error cleaning up MCP Terraform tool: {e}")
         finally:
             _mcp_terraform_tool = None
+
+    # Clean up Microsoft Docs MCP tool
+    if _microsoft_docs_mcp_tool is not None:
+        try:
+            cleanup_method = getattr(_microsoft_docs_mcp_tool, '__aexit__', None)
+            if cleanup_method:
+                await cleanup_method(None, None, None)
+            logger.info("Cleaned up Microsoft Docs MCP tool connection")
+        except Exception as e:
+            logger.warning(f"Error cleaning up Microsoft Docs MCP tool: {e}")
+        finally:
+            _microsoft_docs_mcp_tool = None
+
+
+async def get_microsoft_docs_mcp_tool():
+    """Get or create the Microsoft Learn documentation MCP tool singleton."""
+    global _microsoft_docs_mcp_tool, _microsoft_docs_backoff_until
+
+    if _microsoft_docs_backoff_until and time.time() < _microsoft_docs_backoff_until:
+        if _microsoft_docs_mcp_tool is None:
+            logger.debug(
+                "Skipping Microsoft Docs MCP initialization until %.0f due to previous errors",
+                _microsoft_docs_backoff_until,
+            )
+        return _microsoft_docs_mcp_tool
+
+    if _microsoft_docs_mcp_tool is None:
+        try:
+            from app.core.config import settings
+            mcp_url = (settings.MICROSOFT_LEARN_MCP_URL or "").strip()
+
+            if not mcp_url:
+                logger.info("Microsoft Learn MCP URL not configured; skipping docs MCP initialization.")
+                return None
+
+            from agent_framework import MCPStreamableHTTPTool
+
+            _microsoft_docs_mcp_tool = MCPStreamableHTTPTool(
+                name="Microsoft Learn MCP",
+                url=mcp_url,
+            )
+
+            enter_method = getattr(_microsoft_docs_mcp_tool, '__aenter__', None)
+            if enter_method:
+                try:
+                    await enter_method()
+                except (Exception, asyncio.CancelledError) as exc:
+                    logger.warning(
+                        "Failed to initialize Microsoft Docs MCP tool (%s). Continuing without documentation MCP.",
+                        exc,
+                    )
+                    _microsoft_docs_mcp_tool = None
+                    _microsoft_docs_backoff_until = time.time() + 300
+                    return None
+
+            logger.info(f"Initialized Microsoft Docs MCP tool at {mcp_url}")
+            _microsoft_docs_backoff_until = None
+
+        except ImportError:
+            logger.warning("MCPStreamableHTTPTool not installed - Microsoft Docs MCP integration disabled.")
+            _microsoft_docs_mcp_tool = None
+            _microsoft_docs_backoff_until = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize Microsoft Docs MCP tool: {e}")
+            _microsoft_docs_mcp_tool = None
+            _microsoft_docs_backoff_until = time.time() + 300
+
+    return _microsoft_docs_mcp_tool

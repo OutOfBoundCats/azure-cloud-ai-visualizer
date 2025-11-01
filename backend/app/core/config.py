@@ -72,6 +72,10 @@ class Settings(BaseSettings):
         default="https://developer.hashicorp.com/terraform/mcp-server",
         description="HashiCorp Terraform MCP server endpoint"
     )
+    MICROSOFT_LEARN_MCP_URL: str = Field(
+        default="https://learn.microsoft.com/api/mcp",
+        description="Microsoft Learn documentation MCP endpoint"
+    )
     
     # Deployment
     DEPLOYMENT_TIMEOUT_MINUTES: int = Field(default=30, description="Deployment timeout")

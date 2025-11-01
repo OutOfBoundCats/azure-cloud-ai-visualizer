@@ -3263,7 +3263,7 @@
                                          {
                                              "category":  "networking",
                                              "id":  "networking/10073-icon-service-Front-Door-and-CDN-Profiles",
-                                             "title":  "Front Door And CDN Profiles",
+                                             "title":  "Azure Front Door And CDN Profiles",
                                              "file":  "10073-icon-service-Front-Door-and-CDN-Profiles.svg",
                                              "path":  "/icons/networking/10073-icon-service-Front-Door-and-CDN-Profiles.svg"
                                          },
@@ -3507,7 +3507,7 @@
                                          {
                                              "category":  "new icons",
                                              "id":  "new icons/030777508 -icon-service-Service-Group-Relationships",
-                                             "title":  "030777508  Service Group Relationships",
+                                             "title":  "Service Group Relationships",
                                              "file":  "030777508 -icon-service-Service-Group-Relationships.svg",
                                              "path":  "/icons/new icons/030777508 -icon-service-Service-Group-Relationships.svg"
                                          },
@@ -4987,7 +4987,7 @@
                                          {
                                              "category":  "web",
                                              "id":  "web/10073-icon-service-Front-Door-and-CDN-Profiles",
-                                             "title":  "Front Door And CDN Profiles",
+                                             "title":  "Azure Front Door And CDN Profiles",
                                              "file":  "10073-icon-service-Front-Door-and-CDN-Profiles.svg",
                                              "path":  "/icons/web/10073-icon-service-Front-Door-and-CDN-Profiles.svg"
                                          },

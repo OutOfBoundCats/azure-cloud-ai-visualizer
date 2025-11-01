@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.endpoints import projects_simple, chat_simple, diagram_analysis
-from app.api.endpoints import deployment, iac_mcp
+from app.api.endpoints import deployment, iac_mcp, runs
 
 # iac endpoints depend on optional agent/azure libraries. Import lazily so the
 # main app can start in dev environments where those deps may be missing.
@@ -40,6 +40,7 @@ api_router = APIRouter()
 api_router.include_router(projects_simple.router, prefix="/projects", tags=["projects"])
 api_router.include_router(chat_simple.router, prefix="/chat", tags=["chat"])
 api_router.include_router(diagram_analysis.router, prefix="", tags=["diagram-analysis"])
+api_router.include_router(runs.router, prefix="", tags=["runs"])
 
 # TODO: Add back full endpoints when agent framework issues are resolved
 # api_router.include_router(assets.router, prefix="/assets", tags=["assets"])

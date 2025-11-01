@@ -54,6 +54,11 @@ For easy development without Azure setup:
    uv run uvicorn main:app --reload --port 8000
    ```
 
+4. Test the integration:
+   ```bash
+   python test_openai.py
+   ```
+
 ## Full Setup (Azure Mode)
 
 For production with full Azure integration:

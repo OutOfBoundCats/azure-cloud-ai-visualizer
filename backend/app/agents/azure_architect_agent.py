@@ -10,11 +10,12 @@ This module implements the Microsoft Agent Framework integration for:
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Annotated, Union
-
-from datetime import datetime
-
-from pydantic import Field
+from typing import Any, Dict, List, Optional, Union
+from app.agents.tools.analyze_diagram import analyze_diagram
+from app.agents.tools.plan_deployment import plan_deployment
+from app.agents.tools.generate_reactflow_diagram import generate_reactflow_diagram
+from app.agents.tools.analyze_image_for_architecture import analyze_image_for_architecture
+from app.agents.landing_zone_team import LandingZoneTeam
 from typing import Any as TypingAny, cast
 try:
     from agent_framework import ChatAgent, ChatMessage, TextContent, UriContent
@@ -71,231 +72,8 @@ OpenAIResponsesClient = cast(TypingAny, globals().get('OpenAIResponsesClient') o
 
 logger = logging.getLogger(__name__)
 
-
-# Tool functions for the agent
-def analyze_diagram(
-    diagram_json: Annotated[str, Field(description="ReactFlow diagram JSON string")],
-    target_region: Annotated[str, Field(description="Target Azure region for deployment")] = "westeurope"
-) -> str:
-    """Analyze a ReactFlow diagram and provide architecture insights."""
-    try:
-        # Parse diagram JSON safely
-        if isinstance(diagram_json, str):
-            try:
-                diagram = json.loads(diagram_json)
-            except Exception:
-                diagram = {"nodes": [], "edges": []}
-        elif isinstance(diagram_json, dict):
-            diagram = diagram_json
-        else:
-            diagram = {"nodes": [], "edges": []}
-
-        nodes = diagram.get("nodes", [])
-
-        # Resource naming helpers and maps
-        resource_symbols = {}
-
-        def symbol_name(idx: int, kind: str) -> str:
-            return f"res{idx}_{kind}"
-
-        # Helper to safe-get data fields
-        def get_field(d: dict, *keys, default=None):
-            for k in keys:
-                if k in d:
-                    return d[k]
-            return default
-
-        # Normalize node metadata so generator can detect types
-        for i, node in enumerate(nodes):
-            node_data = node.get("data", {}) or {}
-            title = str(get_field(node_data, "title", default=f"resource{i}"))
-            # Try several places for a resource type: explicit resourceType, type, or title keywords
-            rtype = get_field(node_data, "resourceType", "type", default=None)
-            if isinstance(rtype, str) and rtype.strip() == "":
-                rtype = None
-
-            detected = None
-            if rtype:
-                rt = str(rtype).lower()
-                if "storage" in rt:
-                    detected = "storage"
-                elif "web" in rt or "function" in rt:
-                    detected = "function"
-                elif "sql" in rt and "cosmos" not in rt:
-                    detected = "sql"
-                elif "cosmos" in rt:
-                    detected = "cosmos"
-                elif "redis" in rt:
-                    detected = "redis"
-                elif "network" in rt or "vnet" in rt:
-                    detected = "vnet"
-
-            if detected is None:
-                lt = title.lower()
-                if "storage" in lt or "blob" in lt:
-                    detected = "storage"
-                elif "function" in lt or "func" in lt:
-                    detected = "function"
-                elif "sql" in lt or "database" in lt:
-                    detected = "sql"
-                elif "cosmos" in lt:
-                    detected = "cosmos"
-                elif "redis" in lt:
-                    detected = "redis"
-                elif "vnet" in lt or "subnet" in lt or "network" in lt:
-                    detected = "vnet"
-                elif "monitor" in lt or "activity log" in lt or "advisor" in lt or "insights" in lt:
-                    detected = "monitor"
-                elif "identity" in (node_data.get("category") or "").lower() or "active directory" in lt or "ad" in lt:
-                    detected = "identity"
-                elif "machine" in lt or "ml" in lt or "learning" in lt or "ai" in (node_data.get("category") or "").lower():
-                    detected = "machinelearning"
-                else:
-                    detected = "generic"
-
-            resource_symbols[node.get("id", str(i))] = {
-                "symbol": symbol_name(i, detected),
-                "kind": detected,
-                "title": title,
-                "data": node_data,
-                "index": i,
-            }
-
-        return json.dumps(resource_symbols, indent=2)
-
-    except Exception as e:
-        logger.error(f"Error analyzing diagram: {e}")
-        return json.dumps({"error": str(e)})
-
-
-def plan_deployment(
-    resource_group: Annotated[str, Field(description="Target resource group name")],
-    subscription_id: Annotated[str, Field(description="Azure subscription ID")],
-    bicep_content: Annotated[str, Field(description="Bicep template content")]
-) -> str:
-    """Create a deployment plan for the given Bicep template."""
-    try:
-        plan = {
-            "deployment_name": f"azarch-deploy-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-            "subscription_id": subscription_id,
-            "resource_group": resource_group,
-            "template_size": len(bicep_content),
-            "estimated_resources": bicep_content.count("resource "),
-            "deployment_mode": "Incremental",
-            "validation_required": True,
-            "estimated_duration": "5-10 minutes",
-            "next_steps": [
-                "Validate Bicep template syntax",
-                "Run what-if deployment analysis",
-                "Execute deployment with monitoring"
-            ]
-        }
-        
-        return json.dumps(plan, indent=2)
-        
-    except Exception as e:
-        return f"Error creating deployment plan: {str(e)}"
-
-
-def generate_reactflow_diagram(
-    architecture_description: Annotated[str, Field(description="Natural language description of the architecture")],
-    include_connections: Annotated[bool, Field(description="Whether to include connections between services")] = True
-) -> str:
-    """Generate a ReactFlow diagram JSON from architecture description."""
-    try:
-        # Parse common Azure services from description
-        services = []
-        service_mapping = {
-            "web app": {"type": "azure.appservice", "icon": "mdi:web"},
-            "function": {"type": "azure.functions", "icon": "mdi:lambda"},
-            "storage": {"type": "azure.storage", "icon": "mdi:database"},
-            "database": {"type": "azure.sql", "icon": "mdi:database-outline"},
-            "cosmos": {"type": "azure.cosmos", "icon": "mdi:database-outline"},
-            "redis": {"type": "azure.redis", "icon": "mdi:memory"},
-            "api management": {"type": "azure.apim", "icon": "mdi:api"},
-            "front door": {"type": "azure.frontdoor", "icon": "mdi:door"},
-            "application gateway": {"type": "azure.appgateway", "icon": "mdi:gateway"},
-            "openai": {"type": "azure.openai", "icon": "mdi:robot"},
-            "ai search": {"type": "azure.search", "icon": "mdi:magnify"},
-            "key vault": {"type": "azure.keyvault", "icon": "mdi:key"},
-            "monitor": {"type": "azure.monitor", "icon": "mdi:monitor"},
-            "insights": {"type": "azure.insights", "icon": "mdi:chart-line"}
-        }
-        
-        description_lower = architecture_description.lower()
-        node_id = 1
-        
-        # Generate nodes based on detected services
-        nodes = []
-        edges = []
-        
-        for service_name, service_config in service_mapping.items():
-            if service_name in description_lower:
-                node = {
-                    "id": f"node_{node_id}",
-                    "type": "azureService",
-                    "position": {"x": (node_id - 1) * 200 + 100, "y": 100 + ((node_id - 1) % 3) * 150},
-                    "data": {
-                        "title": service_name.title(),
-                        "subtitle": "Azure Service",
-                        "icon": service_config["icon"],
-                        "type": service_config["type"],
-                        "status": "inactive"
-                    }
-                }
-                nodes.append(node)
-                node_id += 1
-        
-        # Generate basic connections if requested
-        if include_connections and len(nodes) > 1:
-            for i in range(len(nodes) - 1):
-                edge = {
-                    "id": f"edge_{i}",
-                    "source": nodes[i]["id"],
-                    "target": nodes[i + 1]["id"],
-                    "type": "default",
-                    "data": {"protocol": "HTTPS"}
-                }
-                edges.append(edge)
-        
-        # Create ReactFlow diagram
-        diagram = {
-            "nodes": nodes,
-            "edges": edges,
-            "viewport": {"x": 0, "y": 0, "zoom": 1}
-        }
-        
-        return json.dumps(diagram, indent=2)
-        
-    except Exception as e:
-        return f"Error generating ReactFlow diagram: {str(e)}"
-
-
 # REMOVED: Deterministic generate_bicep_code function
 # User requirement: Only use AI for IaC generation, no deterministic fallbacks
-
-
-def analyze_image_for_architecture(
-    image_url: Annotated[str, Field(description="URL of the architecture diagram image")],
-    target_region: Annotated[str, Field(description="Target Azure region")] = "westeurope"
-) -> str:
-    """Analyze an uploaded architecture diagram image and provide insights."""
-    try:
-        # This function will be used with vision-capable models
-        # The actual image analysis will be done by the LLM with vision capabilities
-        analysis = {
-            "image_url": image_url,
-            "target_region": target_region,
-            "analysis_type": "architecture_diagram",
-            "timestamp": datetime.now().isoformat(),
-            "note": "Image analysis will be performed by the AI model with vision capabilities"
-        }
-        
-        return json.dumps(analysis, indent=2)
-        
-    except Exception as e:
-        return f"Error analyzing image: {str(e)}"
-
 
 class AzureArchitectAgent:
     """Azure Architect MAF Agent for chat-driven architecture planning."""
@@ -306,6 +84,14 @@ class AzureArchitectAgent:
         self.agent_client = agent_client
         self.chat_agent = None
         self.use_vision = hasattr(agent_client, "create_agent") or hasattr(agent_client, "chat")
+
+    async def _resolve_docs_tool(self):
+        """Attempt to load the Microsoft Learn documentation MCP tool."""
+        try:
+            from app.deps import get_microsoft_docs_mcp_tool
+            return await get_microsoft_docs_mcp_tool()
+        except Exception:
+            return None
         
     async def initialize(self) -> None:
         """Initialize the chat agent with tools."""
@@ -320,25 +106,60 @@ class AzureArchitectAgent:
         
         instructions = """You are the Azure Architect Agent, an expert in Azure cloud architecture and Infrastructure as Code.
 
-Your capabilities include:
-1. Analyzing ReactFlow diagrams and providing architecture insights
-2. Generating Bicep Infrastructure as Code from diagrams
-3. Creating deployment plans for Azure resources
-4. Generating ReactFlow diagrams from natural language descriptions
-5. Analyzing uploaded architecture images (vision-enabled)
-6. Providing best practices and recommendations
+            Your capabilities include:
+            1. Analyzing ReactFlow diagrams and providing architecture insights
+            2. Generating Bicep Infrastructure as Code from diagrams
+            3. Creating deployment plans for Azure resources
+            4. Generating ReactFlow diagrams from natural language descriptions
+            5. Analyzing uploaded architecture images (vision-enabled)
+            6. Providing best practices and recommendations
 
-When users ask about their architecture:
-- Ask for the diagram JSON if not provided
-- Analyze the components and connections
-- Suggest improvements and best practices
-- Generate appropriate IaC templates
-- Help plan deployments step by step
-- Create visual diagrams from descriptions
-- Analyze uploaded architecture images when provided
+            When users ask about their architecture:
+            - Ask for the diagram JSON if not provided
+            - Analyze the components and connections
+            - Suggest improvements and best practices
+            - Generate appropriate IaC templates
+            - Help plan deployments step by step
+            - Create visual diagrams from descriptions
+            - Analyze uploaded architecture images when provided
 
-Always prioritize security, scalability, and cost optimization in your recommendations.
-Use the available tools to analyze diagrams, generate code, and create visualizations when requested."""
+            When you describe or refine an architecture, ALWAYS include a section titled `Diagram JSON` followed by a fenced ```json block. The JSON must be valid and follow this schema:
+
+            {
+            "services": [
+                {
+                "id": "<azure icon id e.g. analytics/00039-icon-service-Event-Hubs>",
+                "title": "<Azure service title matching the icon id>",
+                "category": "<Azure category name>",
+                "description": "<short usage note>",
+                "groupIds": ["<group id that contains this service>"]
+                }
+            ],
+            "groups": [
+                {
+                "id": "<azure icon id for the grouping, e.g. general/10011-icon-service-Management-Groups>",
+                "label": "<friendly label>",
+                "type": "<one of managementGroup|subscription|region|landingZone|resourceGroup|virtualNetwork|subnet|cluster|networkSecurityGroup|securityBoundary|policyAssignment|roleAssignment|default>",
+                "parentId": "<optional parent group id>",
+                "members": ["<ids of services or nested groups>"]
+                }
+            ],
+            "connections": [
+                { "from": "<service id>", "to": "<service id>", "label": "<data/control flow>" }
+            ]
+            }
+
+            Rules for the JSON:
+            - `id` values must reference real Azure icon identifiers used by the application (as seen in the Azure icon index). Use the exact strings so the frontend can resolve icons.
+            - Every service should belong to the appropriate group hierarchy by listing `groupIds`, and each group should list the same members in its `members` array.
+            - Provide connections for each meaningful integration (ingest, process, store, visualize, secure, etc.).
+            - Do NOT duplicate the same identifier in both `services` and `groups` unless that resource genuinely acts as a container. Prefer modelling containers via the `groups` array.
+            - Keep the JSON well-formed. Avoid comments or trailing commas.
+            - Do **not** repeat container resources (management groups, subscriptions, landing zones, virtual networks, subnets, clusters, etc.) in the `services` array. Represent them only in `groups`.
+            - Enumerate every meaningful integration or data/control flow in the `connections` array so the canvas can render the full topology.
+
+            Always prioritize security, scalability, and cost optimization in your recommendations.
+            Use the available tools to analyze diagrams, generate code, and create visualizations when requested."""
 
         # Create agent with appropriate client
         # Create agent using whichever client API is available. Use getattr
@@ -360,51 +181,103 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
             self.chat_agent = None
         
         logger.info(f"Azure Architect MAF Agent initialized successfully (Vision: {self.use_vision})")
-    
-    async def chat(self, message: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> str:
+
+        
+    async def chat_team(self, message: str, parallel_pass: bool = False) -> str:
+        team = LandingZoneTeam(self)
+        if parallel_pass:
+            return await team.run_with_parallel_pass(message)
+        return await team.run_sequential(message)
+        
+    async def chat(
+        self,
+        message: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Send a message to the agent and get a response."""
         if not self.chat_agent:
             raise RuntimeError("Agent not initialized")
         
         try:
-            # Include conversation history if provided
-            context = ""
-            if conversation_history:
-                context = "\n".join([
-                    f"{msg['role']}: {msg['content']}" 
-                    for msg in conversation_history[-10:]  # Last 10 messages
-                ])
-                message = f"Context:\n{context}\n\nUser: {message}"
-            
-            response = await self.chat_agent.run(message)
-            return response.result
+            composed_prompt = self._compose_prompt(message, conversation_history, context)
+            response = await self.chat_agent.run(composed_prompt)
+            result = getattr(response, "result", None)
+            if isinstance(result, str) and result.strip():
+                return result
+            text = getattr(response, "text", None)
+            if isinstance(text, str) and text.strip():
+                return text
+            return str(response)
             
         except Exception as e:
             logger.error(f"Error in agent chat: {e}")
             return f"I apologize, but I encountered an error: {str(e)}"
     
-    async def stream_chat(self, message: str, conversation_history: Optional[List[Dict[str, Any]]] = None):
+    async def stream_chat(
+        self,
+        message: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ):
         """Stream chat response from the agent."""
         if not self.chat_agent:
             raise RuntimeError("Agent not initialized")
         
         try:
-            # Include conversation history if provided
-            context = ""
-            if conversation_history:
-                context = "\n".join([
-                    f"{msg['role']}: {msg['content']}" 
-                    for msg in conversation_history[-10:]  # Last 10 messages
-                ])
-                message = f"Context:\n{context}\n\nUser: {message}"
-            
-            async for chunk in self.chat_agent.run_stream(message):
+            composed_prompt = self._compose_prompt(message, conversation_history, context)
+            async for chunk in self.chat_agent.run_stream(composed_prompt):
                 if chunk.delta:
                     yield chunk.delta
                     
         except Exception as e:
             logger.error(f"Error in agent stream chat: {e}")
             yield f"I apologize, but I encountered an error: {str(e)}"
+    
+    def _compose_prompt(
+        self,
+        message: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Compose a prompt for the agent that includes structured context."""
+        prefix_parts: List[str] = []
+
+        if context:
+            summary = context.get("summary")
+            if isinstance(summary, str) and summary.strip():
+                prefix_parts.append(f"Conversation summary:\n{summary.strip()}")
+
+            recent = context.get("recent_messages")
+            if isinstance(recent, list):
+                formatted_recent: List[str] = []
+                for entry in recent[-8:]:
+                    if not isinstance(entry, dict):
+                        continue
+                    role = entry.get("role", "user")
+                    content = entry.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        formatted_recent.append(f"{role}: {content.strip()}")
+                if formatted_recent:
+                    prefix_parts.append("Recent exchanges:\n" + "\n".join(formatted_recent))
+
+        if conversation_history:
+            formatted_history: List[str] = []
+            for msg in conversation_history[-10:]:
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    formatted_history.append(f"{role}: {content.strip()}")
+            if formatted_history:
+                prefix_parts.append("Conversation history:\n" + "\n".join(formatted_history))
+
+        user_request = message.strip()
+        if prefix_parts:
+            prefix_parts.append(f"Current user request:\n{user_request}")
+            return "\n\n".join(prefix_parts)
+        return user_request
             
     async def analyze_image_with_chat(self, image_url: str, prompt: str = "Analyze this architecture diagram and create a ReactFlow diagram for it") -> str:
         """Analyze an image using vision capabilities (OpenAI only)."""
@@ -517,10 +390,15 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
                 try:
                     instruction = (
                         "You are an Azure Cloud Infrastructure as Code generator. Given the diagram JSON under 'diagram', "
-                        "produce a realistic production-ready Bicep template mapping each service to appropriate Azure resource types. "
-                        "Infer sensible naming (using namePrefix param), add parameters for locations, SKUs, and secrets (but do NOT include secret values). "
-                        "Include monitoring if include_monitoring is true and basic security best-practice resources (e.g., log analytics workspace) if include_security is true. "
-                        "Return ONLY a JSON object with keys 'bicep_code' (string) and 'parameters' (object). No markdown, no commentary."
+                        "author a subscription-scoped Bicep template that can stand up a production-grade landing zone. "
+                        "Requirements:\n"
+                        "- Start with `targetScope = 'subscription'`.\n"
+                        "- Declare core parameters: location, environment (allowed dev/tst/prd), namePrefix (min/max length), optional tags object, and any network CIDRs needed for vnets/subnets.\n"
+                        "- Create a resource group per top-level workload grouping (e.g., networking, management, logging, shared integration) and deploy resources inside using `module` blocks or inline `resource` definitions scoped to those groups.\n"
+                        "- Map every service from the diagram to a concrete Azure resource type (Microsoft.Network/*, Microsoft.Storage/*, etc.) with realistic API versions, SKU settings, and key properties (identity, diagnostics, access policies). Do not omit services—extend the template when the diagram lacks an obvious Azure equivalent.\n"
+                        "- Wire dependencies properly (e.g., subnet IDs, private endpoints, diagnostic settings to Log Analytics) and include optional monitoring/security resources when include_monitoring/include_security flags are true.\n"
+                        "- Provide useful outputs for core artifacts (vnetId, key vault IDs, workspace keys, etc.).\n"
+                        "- Return ONLY a JSON object with keys `bicep_code` (string containing the full template) and `parameters` (object describing parameter defaults/metadata). No markdown, no commentary."
                     )
                     payload = {
                         "diagram": {"nodes": diagram.get("nodes", []), "edges": diagram.get("edges", [])},
@@ -531,7 +409,11 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
                         },
                     }
                     prompt = f"{instruction}\n\nDiagram Data: {json.dumps(payload, separators=(',',':'))}"
-                    resp = await self.chat_agent.run(prompt)
+                    run_kwargs: Dict[str, Any] = {}
+                    docs_tool = await self._resolve_docs_tool()
+                    if docs_tool:
+                        run_kwargs["tools"] = docs_tool
+                    resp = await self.chat_agent.run(prompt, **run_kwargs)
                     text = getattr(resp, "result", str(resp))
                     # Attempt robust JSON extraction
                     def _extract_json(txt: str):
@@ -602,7 +484,11 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
             """
 
             logger.debug("Generating Terraform via MAF agent")
-            response = await self.chat_agent.run(tf_prompt)
+            run_kwargs: Dict[str, Any] = {}
+            docs_tool = await self._resolve_docs_tool()
+            if docs_tool:
+                run_kwargs["tools"] = docs_tool
+            response = await self.chat_agent.run(tf_prompt, **run_kwargs)
             text = getattr(response, "result", str(response))
 
             # Extract JSON from response
@@ -652,11 +538,13 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
             # Build instruction that emphasizes MCP usage
             instruction = (
                 "You are an Azure IaC generator with access to Azure Bicep MCP tools. "
-                "Use the MCP tools to look up correct resource types, properties, and API versions "
-                "for each service in the diagram. Before emitting each resource block, verify "
-                "required properties and allowed SKUs using MCP schema lookups. "
-                "Return ONLY JSON with keys 'bicep_code' (string) and 'parameters' (object). "
-                "No markdown, no commentary."
+                "Use the MCP tools to confirm resource types, apiVersions, required properties, and SKU options "
+                "for every element in the diagram. Emit a subscription-scoped landing-zone template that mirrors the diagram hierarchy:\n"
+                "- Declare parameters (location, environment, namePrefix, tags, address prefixes, secret placeholders) with @description metadata.\n"
+                "- Provision resource groups/modules for networking, management, logging, runtime, storage, integration, etc., and ensure each service is represented with realistic configuration (identities, diagnostic settings, access policies, SKU tiers).\n"
+                "- Add monitoring/security integrations when appropriate (Log Analytics workspace, Policy assignments, Defender, Key Vault).\n"
+                "- Include outputs for critical resources.\n"
+                "Return ONLY JSON with keys 'bicep_code' (string) and 'parameters' (object). No markdown, no commentary."
             )
             
             payload = {
@@ -671,10 +559,19 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
             
             prompt = f"{instruction}\n\nDiagram Data: {json.dumps(payload, separators=(',',':'))}"
 
+            tools_to_use = mcp_tool
+            try:
+                from app.deps import get_microsoft_docs_mcp_tool
+                docs_tool = await get_microsoft_docs_mcp_tool()
+                if docs_tool:
+                    tools_to_use = [mcp_tool, docs_tool]
+            except Exception:
+                pass
+
             # Run with MCP tool available by passing the tool into the run call
             # Note: agent_framework expects tools to be passed either at agent
-            # creation or per-run; we provide the streamable MCP tool here.
-            resp = await self.chat_agent.run(prompt, tools=mcp_tool)
+            # creation or per-run; we provide the streamable MCP tool here (and docs MCP when available).
+            resp = await self.chat_agent.run(prompt, tools=tools_to_use)
             text = getattr(resp, "result", str(resp))
 
             # Robust JSON extraction (same as standard method)
@@ -788,7 +685,7 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
                 f"Provider: {provider}"
             )
             
-            resp = await self.chat_agent.run(prompt, tools=tf_mcp)
+            docs_tool = await self._resolve_docs_tool()\n            tools_to_use = tf_mcp if not docs_tool else [tf_mcp, docs_tool]\n            resp = await self.chat_agent.run(prompt, tools=tools_to_use)
             text = getattr(resp, "result", str(resp))
             
             # Extract JSON from response
@@ -845,7 +742,7 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
                 f"```hcl\n{terraform_code}\n```"
             )
             
-            resp = await self.chat_agent.run(prompt, tools=tf_mcp)
+            docs_tool = await self._resolve_docs_tool()\n            tools_to_use = tf_mcp if not docs_tool else [tf_mcp, docs_tool]\n            resp = await self.chat_agent.run(prompt, tools=tools_to_use)
             text = getattr(resp, "result", str(resp))
             
             # Extract JSON from response
@@ -891,7 +788,7 @@ Use the available tools to analyze diagrams, generate code, and create visualiza
                 "Return ONLY JSON: {\"provider\": string, \"version\": string, \"resources\": [string], \"data_sources\": [string]}"
             )
             
-            resp = await self.chat_agent.run(prompt, tools=tf_mcp)
+            docs_tool = await self._resolve_docs_tool()\n            tools_to_use = tf_mcp if not docs_tool else [tf_mcp, docs_tool]\n            resp = await self.chat_agent.run(prompt, tools=tools_to_use)
             text = getattr(resp, "result", str(resp))
             
             # Extract JSON from response

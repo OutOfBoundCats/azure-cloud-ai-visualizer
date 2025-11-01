@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 
 interface ImageUploadProps {
   onAnalysisComplete?: (result: DiagramAnalysisResult) => void;
+  onDiagramUpdated?: () => void;
 }
 
 const normalizeGroupKey = (value?: string | null): string => {
@@ -41,7 +42,7 @@ const mapBackendGroupType = (type?: string, label?: string): ParsedGroupType => 
   return 'default';
 };
 
-export const ImageUpload: React.FC<ImageUploadProps> = ({ onAnalysisComplete }) => {
+export const ImageUpload: React.FC<ImageUploadProps> = ({ onAnalysisComplete, onDiagramUpdated }) => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
@@ -208,12 +209,28 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({ onAnalysisComplete }) 
         layout: parsedServices.length <= 3 ? 'horizontal' : parsedServices.length <= 6 ? 'vertical' : 'grid',
         groups: parsedGroups.length > 0 ? parsedGroups : undefined
       };
+      console.log('[ImageUpload] Parsed architecture from diagram analysis', {
+        services: architecture.services.map((svc) => ({ id: svc.id, title: svc.title })),
+        groups: architecture.groups?.map((group) => ({
+          id: group.id,
+          label: group.label,
+          type: group.type,
+          members: group.members,
+        })),
+        connections: architecture.connections,
+      });
       
       // Generate nodes and add to diagram
       const nodes = ArchitectureParser.generateNodes(architecture);
+      console.log('[ImageUpload] Generated nodes from diagram analysis', {
+        nodeCount: nodes.length,
+        connectionCount: architecture.connections.length,
+        sample: nodes.slice(0, 5).map((node) => ({ id: node.id, type: node.type })),
+      });
       
       // Add to diagram using the existing method
       addNodesFromArchitecture(nodes, architecture.connections);
+      onDiagramUpdated?.();
       
       toast.success(`Successfully analyzed diagram! Found ${nodes.length} services and ${mappedConnections.length} connections.`);
       onAnalysisComplete?.(analysisResult);
@@ -226,7 +243,7 @@ export const ImageUpload: React.FC<ImageUploadProps> = ({ onAnalysisComplete }) 
       setProgress(0);
       setTimeout(() => setPreview(null), 3000); // Clear preview after 3 seconds
     }
-  }, [addNodesFromArchitecture, onAnalysisComplete]);
+  }, [addNodesFromArchitecture, onAnalysisComplete, onDiagramUpdated]);
   
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
