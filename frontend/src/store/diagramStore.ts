@@ -29,6 +29,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   nodes: [],
   edges: [],
   selectedNode: null,
+  editingEdgeId: null,
 
   onNodesChange: (changes) => {
     set({

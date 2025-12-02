@@ -41,6 +41,8 @@ const DiagramCanvas = () => {
     onConnect,
     addNode,
     setSelectedNode,
+    editingEdgeId,
+    setEditingEdgeId,
   } = useDiagramStore();
   const removeEdge = useDiagramStore((s) => s.removeEdge);
   const updateEdgeLabel = useDiagramStore((s) => s.updateEdgeLabel);
@@ -48,8 +50,6 @@ const DiagramCanvas = () => {
   const sendNodeToBack = useDiagramStore((s) => s.sendNodeToBack);
   const bringNodeForward = useDiagramStore((s) => s.bringNodeForward);
   const sendNodeBackward = useDiagramStore((s) => s.sendNodeBackward);
-
-  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -196,6 +196,8 @@ const DiagramCanvas = () => {
             color: 'hsl(var(--primary))',
           },
         }}
+        edgesReconnectable={true}
+        elevateEdgesOnSelect={true}
       >
         <Background 
           variant={BackgroundVariant.Dots} 
